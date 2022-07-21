@@ -12,7 +12,7 @@ require (
 	github.com/miekg/dns v1.1.48
 	github.com/pelletier/go-toml v1.9.4
 	github.com/pires/go-proxyproto v0.6.2
-	github.com/refraction-networking/utls v1.0.0
+	github.com/refraction-networking/utls v1.1.1
 	github.com/seiflotfy/cuckoofilter v0.0.0-20220312154859-af7fbb8e765b
 	github.com/stretchr/testify v1.7.1
 	github.com/v2fly/ss-bloomring v0.0.0-20210312155135-28617310f63e
@@ -28,11 +28,13 @@ require (
 )
 
 require (
+	github.com/andybalholm/brotli v1.0.4 // indirect
 	github.com/cheekybits/genny v1.0.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dgryski/go-metro v0.0.0-20211217172704-adc40b04c140 // indirect
 	github.com/fsnotify/fsnotify v1.5.1 // indirect
 	github.com/go-task/slim-sprig v0.0.0-20210107165309-348f09dbbbc0 // indirect
+	github.com/klauspost/compress v1.13.6 // indirect
 	github.com/marten-seemann/qtls-go1-16 v0.1.5 // indirect
 	github.com/marten-seemann/qtls-go1-17 v0.1.1 // indirect
 	github.com/marten-seemann/qtls-go1-18 v0.1.1 // indirect
