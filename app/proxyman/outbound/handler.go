@@ -2,10 +2,8 @@ package outbound
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
-	"io"
-	"os"
-
 	"github.com/xtls/xray-core/app/proxyman"
 	"github.com/xtls/xray-core/common"
 	"github.com/xtls/xray-core/common/buf"
@@ -23,6 +21,10 @@ import (
 	"github.com/xtls/xray-core/transport/internet/stat"
 	"github.com/xtls/xray-core/transport/internet/tls"
 	"github.com/xtls/xray-core/transport/pipe"
+	"io"
+	"math/big"
+	gonet "net"
+	"os"
 )
 
 func getStatCounter(v *core.Instance, tag string) (stats.Counter, stats.Counter) {
@@ -167,10 +169,11 @@ func (h *Handler) Tag() string {
 
 // Dispatch implements proxy.Outbound.Dispatch.
 func (h *Handler) Dispatch(ctx context.Context, link *transport.Link) {
-	outbound := session.OutboundFromContext(ctx)
-	if outbound.Target.Network == net.Network_UDP && outbound.OriginalTarget.Address != nil && outbound.OriginalTarget.Address != outbound.Target.Address {
-		link.Reader = &buf.EndpointOverrideReader{Reader: link.Reader, Dest: outbound.Target.Address, OriginalDest: outbound.OriginalTarget.Address}
-		link.Writer = &buf.EndpointOverrideWriter{Writer: link.Writer, Dest: outbound.Target.Address, OriginalDest: outbound.OriginalTarget.Address}
+	outbounds := session.OutboundsFromContext(ctx)
+	ob := outbounds[len(outbounds) - 1]
+	if ob.Target.Network == net.Network_UDP && ob.OriginalTarget.Address != nil && ob.OriginalTarget.Address != ob.Target.Address {
+		link.Reader = &buf.EndpointOverrideReader{Reader: link.Reader, Dest: ob.Target.Address, OriginalDest: ob.OriginalTarget.Address}
+		link.Writer = &buf.EndpointOverrideWriter{Writer: link.Writer, Dest: ob.Target.Address, OriginalDest: ob.OriginalTarget.Address}
 	}
 	if h.mux != nil {
 		test := func(err error) {
@@ -181,7 +184,7 @@ func (h *Handler) Dispatch(ctx context.Context, link *transport.Link) {
 				common.Interrupt(link.Writer)
 			}
 		}
-		if outbound.Target.Network == net.Network_UDP && outbound.Target.Port == 443 {
+		if ob.Target.Network == net.Network_UDP && ob.Target.Port == 443 {
 			switch h.udp443 {
 			case "reject":
 				test(newError("XUDP rejected UDP/443 traffic").AtInfo())
@@ -190,7 +193,7 @@ func (h *Handler) Dispatch(ctx context.Context, link *transport.Link) {
 				goto out
 			}
 		}
-		if h.xudp != nil && outbound.Target.Network == net.Network_UDP {
+		if h.xudp != nil && ob.Target.Network == net.Network_UDP {
 			if !h.xudp.Enabled {
 				goto out
 			}
@@ -241,10 +244,11 @@ func (h *Handler) Dial(ctx context.Context, dest net.Destination) (stat.Connecti
 			handler := h.outboundManager.GetHandler(tag)
 			if handler != nil {
 				newError("proxying to ", tag, " for dest ", dest).AtDebug().WriteToLog(session.ExportIDToError(ctx))
-				ctx = session.ContextWithOutbound(ctx, &session.Outbound{
+				outbounds := session.OutboundsFromContext(ctx)
+				ctx = session.ContextWithOutbounds(ctx, append(outbounds, &session.Outbound{
 					Target: dest,
-				})
-
+					Tag: tag,
+				})) // add another outbound in session ctx
 				opts := pipe.OptionsFromContext(ctx)
 				uplinkReader, uplinkWriter := pipe.New(opts...)
 				downlinkReader, downlinkWriter := pipe.New(opts...)
@@ -264,12 +268,13 @@ func (h *Handler) Dial(ctx context.Context, dest net.Destination) (stat.Connecti
 		}
 
 		if h.senderSettings.Via != nil {
-			outbound := session.OutboundFromContext(ctx)
-			if outbound == nil {
-				outbound = new(session.Outbound)
-				ctx = session.ContextWithOutbound(ctx, outbound)
+			outbounds := session.OutboundsFromContext(ctx)
+			ob := outbounds[len(outbounds) - 1]
+			if h.senderSettings.ViaCidr == "" {
+				ob.Gateway = h.senderSettings.Via.AsAddress()
+			} else { //Get a random address.
+				ob.Gateway = ParseRandomIPv6(h.senderSettings.Via.AsAddress(), h.senderSettings.ViaCidr)
 			}
-			outbound.Gateway = h.senderSettings.Via.AsAddress()
 		}
 	}
 
@@ -279,10 +284,9 @@ func (h *Handler) Dial(ctx context.Context, dest net.Destination) (stat.Connecti
 
 	conn, err := internet.Dial(ctx, dest, h.streamSettings)
 	conn = h.getStatCouterConnection(conn)
-	outbound := session.OutboundFromContext(ctx)
-	if outbound != nil {
-		outbound.Conn = conn
-	}
+	outbounds := session.OutboundsFromContext(ctx)
+	ob := outbounds[len(outbounds) - 1]
+	ob.Conn = conn
 	return conn, err
 }
 
@@ -311,4 +315,23 @@ func (h *Handler) Start() error {
 func (h *Handler) Close() error {
 	common.Close(h.mux)
 	return nil
+}
+
+
+func ParseRandomIPv6(address net.Address, prefix string) net.Address {
+	_, network, _ := gonet.ParseCIDR(address.IP().String() + "/" + prefix)
+
+	maskSize, totalBits := network.Mask.Size()
+	subnetSize := big.NewInt(1).Lsh(big.NewInt(1), uint(totalBits-maskSize))
+
+	// random
+	randomBigInt, _ := rand.Int(rand.Reader, subnetSize)
+
+	startIPBigInt := big.NewInt(0).SetBytes(network.IP.To16())
+	randomIPBigInt := big.NewInt(0).Add(startIPBigInt, randomBigInt)
+
+	randomIPBytes := randomIPBigInt.Bytes()
+	randomIPBytes = append(make([]byte, 16-len(randomIPBytes)), randomIPBytes...)
+
+	return net.ParseAddress(gonet.IP(randomIPBytes).String())
 }

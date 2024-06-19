@@ -2,7 +2,6 @@ package core
 
 import (
 	"io"
-	"slices"
 	"strings"
 
 	"github.com/xtls/xray-core/common"
@@ -25,7 +24,7 @@ type ConfigLoader func(input interface{}) (*Config, error)
 // ConfigBuilder is a builder to build core.Config from filenames and formats
 type ConfigBuilder func(files []string, formats []string) (*Config, error)
 
-// ConfigMerger merge multiple json configs into on config
+// ConfigsMerger merge multiple json configs into on config
 type ConfigsMerger func(files []string, formats []string) (string, error)
 
 var (
@@ -60,9 +59,12 @@ func GetMergedConfig(args cmdarg.Arg) (string, error) {
 	supported := []string{"json", "yaml", "toml"}
 	for _, file := range args {
 		format := getFormat(file)
-		if slices.Contains(supported, format) {
-			files = append(files, file)
-			formats = append(formats, format)
+		for _, s := range supported {
+			if s == format {
+				files = append(files, file)
+				formats = append(formats, format)
+				break
+			}
 		}
 	}
 	return ConfigMergedFormFiles(files, formats)
